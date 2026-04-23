@@ -1,0 +1,11 @@
+.ishita/
+__pycache__/
+.streamlit_exports/
+.visual_crops/
+.explanation_history/
+.barcode_logs/
+.streamlit_stdout.log
+.streamlit_stderr.log
+.streamlit_stdout_*.log
+.streamlit_stderr_*.log
+.DS_Store
