@@ -8,10 +8,19 @@ from functools import lru_cache
 from pathlib import Path
 from typing import Any
 
-import cv2
 import numpy as np
 import pandas as pd
 from PIL import Image, ImageDraw, ImageOps
+
+try:
+    import cv2
+
+    CV2_AVAILABLE = True
+    CV2_IMPORT_ERROR: Exception | None = None
+except Exception as exc:
+    cv2 = None
+    CV2_AVAILABLE = False
+    CV2_IMPORT_ERROR = exc
 
 
 @dataclass(slots=True)
@@ -93,9 +102,9 @@ def load_barcode_detector():
 def get_barcode_decoder_status() -> dict[str, bool]:
     status = {
         "zxing-cpp": False,
-        "opencv-barcode": hasattr(cv2, "barcode_BarcodeDetector") or (hasattr(cv2, "barcode") and hasattr(cv2.barcode, "BarcodeDetector")),
+        "opencv-barcode": CV2_AVAILABLE and (hasattr(cv2, "barcode_BarcodeDetector") or (hasattr(cv2, "barcode") and hasattr(cv2.barcode, "BarcodeDetector"))),
         "pyzbar": False,
-        "qr-detector": True,
+        "qr-detector": CV2_AVAILABLE,
     }
     try:
         import zxingcpp  # noqa: F401
@@ -156,9 +165,9 @@ def detect_regions(image: Image.Image, confidence_threshold: float = 0.25) -> li
     if detector is None:
         return []
 
-    bgr_image = cv2.cvtColor(np.array(rgb_image), cv2.COLOR_RGB2BGR)
+    detector_input = cv2.cvtColor(np.array(rgb_image), cv2.COLOR_RGB2BGR) if CV2_AVAILABLE else np.array(rgb_image)
     try:
-        results = detector.predict(source=bgr_image, conf=confidence_threshold, verbose=False)
+        results = detector.predict(source=detector_input, conf=confidence_threshold, verbose=False)
     except Exception:
         return []
 
@@ -187,18 +196,24 @@ def detect_regions(image: Image.Image, confidence_threshold: float = 0.25) -> li
 
 def _add_white_margin(image_array: np.ndarray, min_border: int = 12) -> np.ndarray:
     border = max(min_border, int(min(image_array.shape[:2]) * 0.08))
-    return cv2.copyMakeBorder(
-        image_array,
-        border,
-        border,
-        border,
-        border,
-        cv2.BORDER_CONSTANT,
-        value=(255, 255, 255) if image_array.ndim == 3 else 255,
-    )
+    if CV2_AVAILABLE:
+        return cv2.copyMakeBorder(
+            image_array,
+            border,
+            border,
+            border,
+            border,
+            cv2.BORDER_CONSTANT,
+            value=(255, 255, 255) if image_array.ndim == 3 else 255,
+        )
+    if image_array.ndim == 3:
+        return np.pad(image_array, ((border, border), (border, border), (0, 0)), mode="constant", constant_values=255)
+    return np.pad(image_array, ((border, border), (border, border)), mode="constant", constant_values=255)
 
 
 def _deskew_image(image_array: np.ndarray) -> np.ndarray | None:
+    if not CV2_AVAILABLE:
+        return None
     gray = image_array if image_array.ndim == 2 else cv2.cvtColor(image_array, cv2.COLOR_BGR2GRAY)
     _, thresholded = cv2.threshold(gray, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
     inverted = 255 - thresholded
@@ -229,16 +244,29 @@ def _deskew_image(image_array: np.ndarray) -> np.ndarray | None:
 
 def generate_preprocessing_variants(image: Image.Image) -> list[tuple[str, np.ndarray]]:
     rgb_array = np.array(ImageOps.exif_transpose(image.convert("RGB")))
-    gray = cv2.cvtColor(rgb_array, cv2.COLOR_RGB2GRAY)
-    equalized = cv2.equalizeHist(gray)
-    upscaled_2x = cv2.resize(gray, None, fx=2, fy=2, interpolation=cv2.INTER_CUBIC)
-    upscaled_3x = cv2.resize(gray, None, fx=3, fy=3, interpolation=cv2.INTER_CUBIC)
-    _, otsu = cv2.threshold(equalized, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
-    adaptive = cv2.adaptiveThreshold(equalized, 255, cv2.ADAPTIVE_THRESH_GAUSSIAN_C, cv2.THRESH_BINARY, 31, 11)
-    sharpen_kernel = np.array([[0, -1, 0], [-1, 5, -1], [0, -1, 0]])
-    sharpened = cv2.filter2D(equalized, -1, sharpen_kernel)
-    inverted = cv2.bitwise_not(otsu)
-    contrast = cv2.convertScaleAbs(equalized, alpha=1.7, beta=0)
+    if CV2_AVAILABLE:
+        gray = cv2.cvtColor(rgb_array, cv2.COLOR_RGB2GRAY)
+        equalized = cv2.equalizeHist(gray)
+        upscaled_2x = cv2.resize(gray, None, fx=2, fy=2, interpolation=cv2.INTER_CUBIC)
+        upscaled_3x = cv2.resize(gray, None, fx=3, fy=3, interpolation=cv2.INTER_CUBIC)
+        _, otsu = cv2.threshold(equalized, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
+        adaptive = cv2.adaptiveThreshold(equalized, 255, cv2.ADAPTIVE_THRESH_GAUSSIAN_C, cv2.THRESH_BINARY, 31, 11)
+        sharpen_kernel = np.array([[0, -1, 0], [-1, 5, -1], [0, -1, 0]])
+        sharpened = cv2.filter2D(equalized, -1, sharpen_kernel)
+        inverted = cv2.bitwise_not(otsu)
+        contrast = cv2.convertScaleAbs(equalized, alpha=1.7, beta=0)
+    else:
+        gray = np.array(ImageOps.grayscale(Image.fromarray(rgb_array)))
+        equalized = np.array(ImageOps.equalize(Image.fromarray(gray)))
+        upscaled_2x = np.array(Image.fromarray(gray).resize((gray.shape[1] * 2, gray.shape[0] * 2), Image.Resampling.BICUBIC))
+        upscaled_3x = np.array(Image.fromarray(gray).resize((gray.shape[1] * 3, gray.shape[0] * 3), Image.Resampling.BICUBIC))
+        threshold = int(np.median(equalized))
+        otsu = np.where(equalized >= threshold, 255, 0).astype(np.uint8)
+        adaptive_threshold = np.array(ImageOps.autocontrast(Image.fromarray(equalized)))
+        adaptive = np.where(adaptive_threshold >= np.mean(adaptive_threshold), 255, 0).astype(np.uint8)
+        sharpened = equalized
+        inverted = 255 - otsu
+        contrast = np.clip(equalized.astype(np.float32) * 1.7, 0, 255).astype(np.uint8)
 
     variants = [
         ("original", _add_white_margin(rgb_array)),
@@ -261,12 +289,18 @@ def generate_preprocessing_variants(image: Image.Image) -> list[tuple[str, np.nd
 def _rotate_variant(image_array: np.ndarray, angle: int) -> np.ndarray:
     if angle == 0:
         return image_array
-    if angle == 90:
+    if angle == 90 and CV2_AVAILABLE:
         return cv2.rotate(image_array, cv2.ROTATE_90_CLOCKWISE)
-    if angle == 180:
+    if angle == 180 and CV2_AVAILABLE:
         return cv2.rotate(image_array, cv2.ROTATE_180)
-    if angle == 270:
+    if angle == 270 and CV2_AVAILABLE:
         return cv2.rotate(image_array, cv2.ROTATE_90_COUNTERCLOCKWISE)
+    if angle == 90:
+        return np.rot90(image_array, k=3)
+    if angle == 180:
+        return np.rot90(image_array, k=2)
+    if angle == 270:
+        return np.rot90(image_array, k=1)
     return image_array
 
 
@@ -311,6 +345,8 @@ def _decode_with_zxing(image_array: np.ndarray) -> list[DecodedValue]:
 
 
 def _load_opencv_barcode_detector():
+    if not CV2_AVAILABLE:
+        return None
     if hasattr(cv2, "barcode_BarcodeDetector"):
         return cv2.barcode_BarcodeDetector()
     if hasattr(cv2, "barcode") and hasattr(cv2.barcode, "BarcodeDetector"):
@@ -377,6 +413,8 @@ def _decode_with_pyzbar(image_array: np.ndarray) -> list[DecodedValue]:
 
 
 def _decode_with_qr_detector(image_array: np.ndarray) -> list[DecodedValue]:
+    if not CV2_AVAILABLE:
+        return []
     detector = cv2.QRCodeDetector()
     if image_array.ndim == 2:
         source = image_array
@@ -403,6 +441,8 @@ def _decode_with_qr_detector(image_array: np.ndarray) -> list[DecodedValue]:
 
 
 def _decode_with_wechat(image_array: np.ndarray) -> list[DecodedValue]:
+    if not CV2_AVAILABLE:
+        return []
     if not hasattr(cv2, "wechat_qrcode_WeChatQRCode"):
         return []
 
@@ -470,7 +510,12 @@ def decoder_cascade(
 
 def explain_decode_failure(image: Image.Image, region_count: int) -> tuple[str, list[str]]:
     gray = np.array(image.convert("L"))
-    blur_score = cv2.Laplacian(gray, cv2.CV_64F).var()
+    if CV2_AVAILABLE:
+        blur_score = cv2.Laplacian(gray, cv2.CV_64F).var()
+    else:
+        dx = np.diff(gray.astype(np.float32), axis=1)
+        dy = np.diff(gray.astype(np.float32), axis=0)
+        blur_score = float(np.var(dx)) + float(np.var(dy))
     contrast = float(np.std(gray))
 
     causes: list[str] = []
@@ -865,9 +910,8 @@ class LiveBarcodeProcessor:
     def recv(self, frame):
         import av
 
-        original_bgr = frame.to_ndarray(format="bgr24")
-        original_rgb = cv2.cvtColor(original_bgr, cv2.COLOR_BGR2RGB)
-        preview_bgr = cv2.flip(original_bgr, 1)
+        original_rgb = frame.to_ndarray(format="rgb24")
+        preview_rgb = np.flip(original_rgb, axis=1).copy()
         self.frame_count += 1
 
         if self.frame_count % 8 == 0:
@@ -877,13 +921,13 @@ class LiveBarcodeProcessor:
             with self.lock:
                 self.latest_result = preview_result
                 self.latest_code = scan_result.primary_decoded.value if scan_result.primary_decoded else None
-            preview_bgr = cv2.cvtColor(np.array(preview_result.annotated_image), cv2.COLOR_RGB2BGR)
+            preview_rgb = np.array(preview_result.annotated_image)
         else:
             with self.lock:
                 if self.latest_result is not None:
-                    preview_bgr = cv2.cvtColor(np.array(self.latest_result.annotated_image), cv2.COLOR_RGB2BGR)
+                    preview_rgb = np.array(self.latest_result.annotated_image)
 
-        return av.VideoFrame.from_ndarray(preview_bgr, format="bgr24")
+        return av.VideoFrame.from_ndarray(preview_rgb, format="rgb24")
 
     def snapshot(self) -> tuple[BarcodeScanResult | None, str | None]:
         with self.lock:

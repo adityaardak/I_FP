@@ -3,7 +3,7 @@ pandas
 openpyxl
 requests
 Pillow
-opencv-contrib-python
+opencv-contrib-python-headless
 numpy
 scikit-learn
 streamlit-webrtc
