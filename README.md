@@ -170,3 +170,85 @@ LinkedIn
 SAP
 
 for providing the platform and resources for this project.
+
+---
+
+## 🖥️ Streamlit App – Power BI Risk Console
+
+This repository also includes a full-featured **Streamlit web application** (`app.py`) that wraps the embedded Power BI dashboard and adds live barcode scanning and ML-powered order risk detection.
+
+### ✨ Features
+
+#### 📊 Tab 1 – Dashboard Viewer
+- Embeds the 9-page Power BI report directly inside the Streamlit UI
+- Sidebar navigation buttons let you switch between Power BI report pages without leaving the app
+- Supports both the Power BI JavaScript SDK (with authentication) and a simple iframe fallback
+
+#### 🔍 Tab 2 – Barcode / Order Lookup
+- **Image upload mode**: upload a screenshot or photo containing a barcode or QR code
+- **Live camera mode**: uses the device camera via `streamlit-webrtc` (or falls back to `st.camera_input`)
+- Multi-decoder pipeline tries **zxing-cpp → OpenCV → pyzbar → QR fallback** for best decode accuracy
+- Crop inspection and retry decode on individual detected regions
+- Match the decoded barcode value against an uploaded Excel or CSV order sheet (auto-detects barcode, SKU, product code, or order ID columns)
+- Scan history and saveable lookup logs
+
+#### 🚨 Tab 3 – Order Risk & Anomaly Detector
+- Upload any Excel or CSV order sheet and automatically detect suspicious rows
+- Combines **Isolation Forest** (scikit-learn) with statistical z-score and IQR outlier signals
+- Detects amount mismatches (qty × price ≠ total), price/quantity deviations within product groups, and rare categorical values
+- Configurable sensitivity, date range filter, and item/barcode text filter
+- Outputs a ranked risk table with per-row explanations, a review recommendation box, and an interactive Altair scatter chart
+- Barcode-linked risk card shows the anomaly score for the currently scanned order
+
+### 🛠️ App Tech Stack
+
+| Layer | Technology |
+|---|---|
+| Web framework | Streamlit |
+| Power BI embedding | iframe / Power BI JS SDK |
+| Data processing | Pandas, NumPy |
+| Anomaly detection | scikit-learn (Isolation Forest, StandardScaler) |
+| Barcode decoding | zxing-cpp, OpenCV, pyzbar, RapidOCR |
+| Live camera | streamlit-webrtc, av |
+| Visualisation | Altair |
+| Vision-language models | 🤗 Transformers (FastVLM 0.5B, Qwen2.5-VL 3B), PyTorch |
+| Object detection | Ultralytics (YOLOv8) |
+| File formats | openpyxl (Excel), Pillow (images) |
+
+### 🚀 Running the App
+
+1. **Install dependencies**
+   ```bash
+   pip install -r requirements.txt
+   ```
+
+2. **Start the app**
+   ```bash
+   streamlit run app.py
+   ```
+
+3. **(Optional) Configure Power BI credentials**
+
+   Create a `.streamlit/secrets.toml` file (or set environment variables) with your Power BI connection details:
+   ```toml
+   POWERBI_IFRAME_URL = "https://app.powerbi.com/reportEmbed?reportId=..."
+   POWERBI_REPORT_ID  = "your-report-id"
+   POWERBI_TENANT_ID  = "your-tenant-id"
+   POWERBI_GROUP_ID   = "your-workspace-id"
+   POWERBI_CLIENT_ID  = "your-client-id"
+   POWERBI_CLIENT_SECRET = "your-client-secret"
+   ```
+   Without credentials the app uses iframe mode and still embeds the public report URL bundled with the project.
+
+### 📁 App File Structure
+
+```
+app.py                  # Main Streamlit application
+requirements.txt        # Python dependencies
+utils/
+  barcode_utils.py      # Barcode detection, decoding, and order lookup
+  powerbi_utils.py      # Power BI page discovery and embed HTML builder
+  analysis_utils.py     # Anomaly feature engineering and scoring
+  vlm_utils.py          # Vision-language model helpers (FastVLM / Qwen2.5-VL)
+*.pbix                  # Power BI desktop file (dashboard source)
+```
