@@ -23,10 +23,10 @@ from PIL import Image
 
 
 DEFAULT_IFRAME_URL = (
-    "https://app.powerbi.com/reportEmbed"
-    "?reportId=c2e9503b-c8c7-417b-8ba6-465fbbc8c5e6"
+     "https://app.powerbi.com/reportEmbed"
+    "?reportId=f3320d4c-6fd9-41c3-9428-ba6b1a6292ac"
     "&autoAuth=true"
-    "&ctid=ad06ef22-d6dc-4a55-b4c1-c3a158f5f147"
+    "&ctid=aed43286-0f66-47d6-942b-d31a4b8addca"
     "&actionBarEnabled=true"
     "&reportCopilotInEmbed=true"
 )
