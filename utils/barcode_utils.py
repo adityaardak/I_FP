@@ -328,6 +328,29 @@ def _rotate_variant(image_array: np.ndarray, angle: int) -> np.ndarray:
 def _array_to_bbox(points: Any) -> tuple[int, int, int, int] | None:
     if points is None:
         return None
+    if all(
+        hasattr(points, attribute)
+        for attribute in ("top_left", "top_right", "bottom_right", "bottom_left")
+    ):
+        extracted_points: list[tuple[float, float]] = []
+        for attribute in ("top_left", "top_right", "bottom_right", "bottom_left"):
+            point = getattr(points, attribute, None)
+            if point is None:
+                continue
+            x_value = getattr(point, "x", None)
+            y_value = getattr(point, "y", None)
+            if x_value is None or y_value is None:
+                continue
+            extracted_points.append((float(x_value), float(y_value)))
+        if extracted_points:
+            x_values = [point[0] for point in extracted_points]
+            y_values = [point[1] for point in extracted_points]
+            return (
+                int(min(x_values)),
+                int(min(y_values)),
+                int(max(x_values)),
+                int(max(y_values)),
+            )
     point_array = np.array(points)
     if point_array.size == 0:
         return None
@@ -353,11 +376,15 @@ def _decode_with_zxing(image_array: np.ndarray) -> list[DecodedValue]:
         for result in zxingcpp.read_barcodes(image_array):
             if not result.text:
                 continue
+            try:
+                bbox = _array_to_bbox(getattr(result, "position", None))
+            except Exception:
+                bbox = None
             decoded.append(
                 DecodedValue(
                     value=result.text,
                     symbology=str(result.format),
-                    bbox=_array_to_bbox(getattr(result, "position", None)),
+                    bbox=bbox,
                 )
             )
     except Exception:
